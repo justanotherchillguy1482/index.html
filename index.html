@@ -2,27 +2,29 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Hyper FPS Starter</title>
+  <title>Hyper FPS Starter (Fixed)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
     #hud {
       position: fixed; top: 0; left: 0; right: 0; color: #fff;
       font-family: system-ui, sans-serif; padding: 8px 12px; display: flex; justify-content: space-between;
-      pointer-events: none;
+      pointer-events: none; z-index: 10;
     }
     #centerDot {
       position: fixed; top: 50%; left: 50%; width: 6px; height: 6px;
       transform: translate(-50%, -50%); border-radius: 50%; background: rgba(255,255,255,0.9);
-      pointer-events: none;
+      pointer-events: none; z-index: 10;
     }
     #overlay {
       position: fixed; inset: 0; display: grid; place-items: center; backdrop-filter: blur(2px);
       color: #fff; font-family: system-ui, sans-serif; background: rgba(0,0,0,0.35);
+      z-index: 20;
     }
     #overlay button {
       pointer-events: auto; padding: 10px 16px; background: #1e90ff; border: none; color: #fff; font-weight: 600; border-radius: 6px; cursor: pointer;
     }
+    canvas { display: block; }
   </style>
 </head>
 <body>
@@ -34,12 +36,11 @@
   <div id="overlay">
     <div>
       <h1>Hyper FPS</h1>
-      <p>Click to lock cursor. WASD to move, Space to jump, Shift to sprint, Left mouse to shoot.</p>
+      <p>Click Start, then move mouse. WASD to move, Space to jump, Shift to sprint, Left mouse to shoot.</p>
       <button id="startBtn">Start</button>
     </div>
   </div>
 
-  <!-- Three.js and controls -->
   <script type="module">
     import * as THREE from "https://unpkg.com/three@0.165.0/build/three.module.js";
     import { PointerLockControls } from "https://unpkg.com/three@0.165.0/examples/jsm/controls/PointerLockControls.js";
@@ -48,43 +49,59 @@
     import { RenderPass } from "https://unpkg.com/three@0.165.0/examples/jsm/postprocessing/RenderPass.js";
     import { UnrealBloomPass } from "https://unpkg.com/three@0.165.0/examples/jsm/postprocessing/UnrealBloomPass.js";
 
-    const canvas = document.createElement("canvas"); document.body.appendChild(canvas);
+    // Renderer
+    const canvas = document.createElement("canvas");
+    document.body.appendChild(canvas);
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
+    renderer.shadowMap.enabled = true;
 
+    // Scene and camera
     const scene = new THREE.Scene();
-
-    // Camera
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 500);
-    camera.position.set(0, 1.7, 5); // human eye height
+    camera.position.set(0, 1.7, 5);
 
-    // Environment (HDRI for realistic reflections)
+    // Pointer lock controls (must be updated each frame)
+    const controls = new PointerLockControls(camera, document.body);
+    scene.add(controls.getObject());
+
+    // Overlay start
+    const overlay = document.getElementById("overlay");
+    const startBtn = document.getElementById("startBtn");
+    startBtn.addEventListener("click", () => {
+      controls.lock();
+    });
+    controls.addEventListener("lock", () => overlay.style.display = "none");
+    controls.addEventListener("unlock", () => overlay.style.display = "grid");
+
+    // Environment (optional HDR — place assets/env.hdr if you have one)
     new RGBELoader()
       .setDataType(THREE.UnsignedByteType)
       .load("assets/env.hdr", (hdr) => {
         hdr.mapping = THREE.EquirectangularReflectionMapping;
         scene.environment = hdr;
-        scene.background = hdr; // optional: comment for noir background
+        scene.background = hdr;
+      }, undefined, () => {
+        // If no HDR found, use a neutral color
+        scene.background = new THREE.Color(0x101318);
       });
 
-    // Lighting
+    // Lights
     const sun = new THREE.DirectionalLight(0xffffff, 1.2);
     sun.position.set(10, 20, 10);
     sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
     scene.add(sun);
     scene.add(new THREE.AmbientLight(0xffffff, 0.25));
 
-    // Floor (PBR)
-    const floorTex = new THREE.TextureLoader().load("assets/floor_diffuse.jpg");
-    floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
-    floorTex.repeat.set(8, 8);
-    const floorNorm = new THREE.TextureLoader().load("assets/floor_normal.jpg");
-    floorNorm.wrapS = floorNorm.wrapT = THREE.RepeatWrapping;
-    floorNorm.repeat.set(8, 8);
+    // Ground
+    const texLoader = new THREE.TextureLoader();
+    const floorTex = texLoader.load("assets/floor_diffuse.jpg", t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(8, 8); });
+    const floorNorm = texLoader.load("assets/floor_normal.jpg", t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(8, 8); });
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(200, 200),
       new THREE.MeshStandardMaterial({ map: floorTex, normalMap: floorNorm, roughness: 0.9, metalness: 0.0 })
@@ -93,7 +110,7 @@
     floor.receiveShadow = true;
     scene.add(floor);
 
-    // Simple cover geometry
+    // Cover
     const coverMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.6, metalness: 0.1 });
     for (let i = 0; i < 10; i++) {
       const box = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), coverMat);
@@ -101,16 +118,6 @@
       box.castShadow = true; box.receiveShadow = true;
       scene.add(box);
     }
-
-    // Player controls
-    const controls = new PointerLockControls(camera, document.body);
-    const overlay = document.getElementById("overlay");
-    const startBtn = document.getElementById("startBtn");
-    startBtn.addEventListener("click", () => {
-      controls.lock();
-    });
-    controls.addEventListener("lock", () => overlay.style.display = "none");
-    controls.addEventListener("unlock", () => overlay.style.display = "grid");
 
     // Movement state
     const keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
@@ -120,7 +127,7 @@
       if (e.code === "KeyS") keys.s = true;
       if (e.code === "KeyD") keys.d = true;
       if (e.code === "Space") keys.space = true;
-      if (e.code === "ShiftLeft") keys.shift = true;
+      if (e.code === "ShiftLeft" || e.code === "ShiftRight") keys.shift = true;
     });
     window.addEventListener("keyup", e => {
       if (e.code === "KeyW") keys.w = false;
@@ -128,7 +135,7 @@
       if (e.code === "KeyS") keys.s = false;
       if (e.code === "KeyD") keys.d = false;
       if (e.code === "Space") keys.space = false;
-      if (e.code === "ShiftLeft") keys.shift = false;
+      if (e.code === "ShiftLeft" || e.code === "ShiftRight") keys.shift = false;
     });
 
     // Physics-lite
@@ -137,12 +144,15 @@
     const GRAVITY = 20, SPEED = 6, SPRINT = 10, JUMP = 8;
 
     function move(dt) {
+      // Only move when pointer is locked (player "in game")
+      if (!controls.isLocked) return;
+
       const speed = keys.shift ? SPRINT : SPEED;
       const forward = new THREE.Vector3();
       const right = new THREE.Vector3();
       camera.getWorldDirection(forward);
       forward.y = 0; forward.normalize();
-      right.crossVectors(forward, new THREE.Vector3(0,1,0)).negate(); // right vector
+      right.crossVectors(forward, new THREE.Vector3(0,1,0)).negate();
 
       const wish = new THREE.Vector3();
       if (keys.w) wish.add(forward);
@@ -154,14 +164,17 @@
       velocity.x = wish.x * speed;
       velocity.z = wish.z * speed;
 
-      // gravity/jump
       if (!onGround) velocity.y -= GRAVITY * dt;
       if (onGround && keys.space) { velocity.y = JUMP; onGround = false; }
 
-      const next = camera.position.clone().addScaledVector(velocity, dt);
-      // ground collision (very simple)
-      if (next.y < 1.7) { next.y = 1.7; velocity.y = 0; onGround = true; }
-      camera.position.copy(next);
+      const obj = controls.getObject();
+      const next = obj.position.clone().addScaledVector(velocity, dt);
+
+      // simple ground collision
+      const eyeHeight = 1.7;
+      if (next.y < eyeHeight) { next.y = eyeHeight; velocity.y = 0; onGround = true; }
+
+      obj.position.copy(next);
     }
 
     // Enemies
@@ -177,13 +190,14 @@
     }
     for (let i = 0; i < 12; i++) spawnEnemy();
 
-    // Shooting
+    // HUD
     let ammo = 30, score = 0, hp = 100;
     const ammoEl = document.getElementById("ammo");
     const scoreEl = document.getElementById("score");
     const hpEl = document.getElementById("hp");
     ammoEl.textContent = ammo; scoreEl.textContent = score; hpEl.textContent = hp;
 
+    // Shooting
     const raycaster = new THREE.Raycaster();
     window.addEventListener("mousedown", (e) => {
       if (e.button !== 0 || !controls.isLocked) return;
@@ -192,7 +206,7 @@
 
       const dir = new THREE.Vector3();
       camera.getWorldDirection(dir);
-      raycaster.set(camera.position, dir);
+      raycaster.set(controls.getObject().position, dir);
 
       const hits = raycaster.intersectObjects(enemies, false);
       if (hits.length) {
@@ -210,13 +224,13 @@
       muzzleFlash();
     });
 
-    // Visual effects: post-processing
+    // Post-processing
     const composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
     const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.3, 0.8, 0.85);
     composer.addPass(bloom);
 
-    // Impact flash
+    // Impact & muzzle flashes
     const flashes = [];
     function flash(pos) {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xffffaa }));
@@ -225,14 +239,15 @@
     }
     function muzzleFlash() {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xffee88 }));
-      s.position.copy(camera.position).add(camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(0.5));
+      const dir = camera.getWorldDirection(new THREE.Vector3());
+      s.position.copy(controls.getObject().position).add(dir.multiplyScalar(0.5));
       s.scale.set(0.2, 0.2, 0.2);
       scene.add(s); flashes.push({ sprite: s, t: 0 });
     }
 
-    // Enemy AI: simple chase
+    // Enemy AI
     function updateEnemies(dt) {
-      const playerPos = camera.position;
+      const playerPos = controls.getObject().position;
       enemies.forEach(e => {
         const toPlayer = new THREE.Vector3().subVectors(playerPos, e.position);
         toPlayer.y = 0;
@@ -241,7 +256,6 @@
           toPlayer.normalize();
           e.position.addScaledVector(toPlayer, Math.min(2.5, dist) * dt);
         }
-        // attack if close
         if (dist < 1.8) {
           hp = Math.max(0, hp - 15 * dt);
           hpEl.textContent = Math.round(hp);
@@ -253,8 +267,13 @@
     let last = performance.now();
     function animate(now) {
       const dt = Math.min(0.033, (now - last) / 1000); last = now;
+
       move(dt);
       updateEnemies(dt);
+
+      // Required: update controls each frame for pointer lock camera
+      controls.update();
+
       // Update flashes
       for (let i = flashes.length - 1; i >= 0; i--) {
         const f = flashes[i];
@@ -276,7 +295,7 @@
       composer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    // Simple reload key
+    // Reload key
     window.addEventListener("keydown", (e) => {
       if (e.code === "KeyR") { ammo = 30; ammoEl.textContent = ammo; }
     });
